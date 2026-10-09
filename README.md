@@ -12,6 +12,19 @@ For every floor it compares:
 APs assigned to the floor but not present (by MAC address) in the positions
 list are reported as missing placement.
 
+## Python 3.8 (legacy version)
+
+`main` uses the `dnacentersdk` package and needs Python 3.12+. If you are
+stuck on an older Python (3.8+), use the `requests`-based `legacy` branch:
+
+```bash
+git clone --branch legacy https://github.com/aradford123/missing_ap_map.git missing_ap_map_legacy
+cd missing_ap_map_legacy
+uv sync
+```
+
+Or download it as a zip: <https://github.com/aradford123/missing_ap_map/archive/refs/heads/legacy.zip>
+
 ## Setup
 
 ```bash
