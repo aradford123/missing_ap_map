@@ -3,7 +3,7 @@ name = "missing-ap-map"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.8"
 dependencies = [
-    "dnacentersdk>=2.11.4",
+    "requests>=2.31",
 ]

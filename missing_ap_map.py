@@ -18,10 +18,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from dnacentersdk import api
-from dnacentersdk.exceptions import ApiError
-
-from dnac_config import DNAC, DNAC_USER, DNAC_PASSWORD, DNAC_VERSION
+from dnac_client import DnacClient, DnacError
+from dnac_config import DNAC, DNAC_USER, DNAC_PASSWORD
 
 logger = logging.getLogger(__name__)
 
@@ -89,19 +87,19 @@ class RateLimiter:
 
 
 def _call_with_retry(fn, attempts=3, base_delay=1.0):
-    """Run fn() with exponential backoff + jitter on ApiError. Re-raises the
+    """Run fn() with exponential backoff + jitter on DnacError. Re-raises the
     last error if every attempt fails - callers decide what a permanent
     failure means for their blast radius (e.g. one inventory batch vs. one
     floor), this just protects against transient blips."""
     for attempt in range(1, attempts + 1):
         try:
             return fn()
-        except ApiError as exc:
+        except DnacError as exc:
             if attempt == attempts:
                 raise
             delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, base_delay)
             logger.warning(
-                "Retrying after ApiError (attempt %d/%d): %s - waiting %.1fs",
+                "Retrying after DnacError (attempt %d/%d): %s - waiting %.1fs",
                 attempt, attempts, exc, delay,
             )
             time.sleep(delay)
@@ -287,8 +285,8 @@ def fetch_all_floors(dnac_api, site_filter=None, page_size=PAGE_SIZE, rate_limit
     """Return every floor in the site hierarchy, optionally scoped to floors
     whose nameHierarchy contains site_filter as a substring."""
     floors = _paginate(
-        lambda limit, offset: dnac_api.site_design.get_sites(
-            limit=limit, offset=offset, type="floor"
+        lambda limit, offset: dnac_api.get(
+            "/dna/intent/api/v1/sites", limit=limit, offset=offset, type="floor"
         ),
         page_size,
         rate_limiter=rate_limiter,
@@ -318,9 +316,11 @@ def fetch_device_inventory(dnac_api, device_ids, batch_size=DEFAULT_INVENTORY_BA
             rate_limiter.acquire()
         try:
             response = _call_with_retry(
-                lambda: dnac_api.devices.get_device_list(id=",".join(batch), limit=batch_size)
+                lambda: dnac_api.get(
+                    "/dna/intent/api/v1/network-device", id=",".join(batch), limit=batch_size
+                )
             )
-        except ApiError as exc:
+        except DnacError as exc:
             logger.error("Inventory batch of %d device(s) failed after retries: %s", len(batch), exc)
             failed_ids.update(batch)
             continue
@@ -344,16 +344,17 @@ def fetch_floor_devices(dnac_api, floor, page_size=PAGE_SIZE, rate_limiter=None)
     try:
         if rate_limiter:
             rate_limiter.acquire()
-        count_response = dnac_api.site_design.get_site_assigned_network_devices_count(
-            site_id=floor_id
+        count_response = dnac_api.get(
+            "/dna/intent/api/v1/networkDevices/assignedToSite/count", siteId=floor_id
         )
         assigned_total = count_response.get("response", 0) or 0
         if not assigned_total:
             return FloorResult(floor_id, site_hierarchy, status="empty")
 
         assigned_devices = _paginate(
-            lambda limit, offset: dnac_api.site_design.get_site_assigned_network_devices(
-                site_id=floor_id, limit=limit, offset=offset
+            lambda limit, offset: dnac_api.get(
+                "/dna/intent/api/v1/networkDevices/assignedToSite",
+                siteId=floor_id, limit=limit, offset=offset,
             ),
             page_size,
             rate_limiter=rate_limiter,
@@ -367,7 +368,7 @@ def fetch_floor_devices(dnac_api, floor, page_size=PAGE_SIZE, rate_limiter=None)
             "assigned_devices": assigned_devices,
             "device_ids": device_ids,
         }
-    except ApiError as exc:
+    except DnacError as exc:
         logger.error("API error on floor %s (%s): %s", site_hierarchy, floor_id, exc)
         return FloorResult(floor_id, site_hierarchy, status="error", error=str(exc))
     except Exception as exc:  # noqa: BLE001 - keep the scan going for one bad floor
@@ -391,8 +392,9 @@ def finish_floor_scan(dnac_api, pending, inventory, page_size=PAGE_SIZE, rate_li
             return FloorResult(floor_id, site_hierarchy, status="empty")
 
         positioned = _paginate(
-            lambda limit, offset: dnac_api.site_design.get_access_points_positions(
-                floor_id=floor_id, limit=limit, offset=offset
+            lambda limit, offset: dnac_api.get(
+                "/dna/intent/api/v2/floors/{}/accessPointPositions".format(floor_id),
+                limit=limit, offset=offset,
             ),
             page_size,
             rate_limiter=rate_limiter,
@@ -426,7 +428,7 @@ def finish_floor_scan(dnac_api, pending, inventory, page_size=PAGE_SIZE, rate_li
             positioned=positioned_count,
             missing=missing,
         )
-    except ApiError as exc:
+    except DnacError as exc:
         logger.error("API error on floor %s (%s): %s", site_hierarchy, floor_id, exc)
         return FloorResult(floor_id, site_hierarchy, status="error", error=str(exc))
     except Exception as exc:  # noqa: BLE001 - keep the scan going for one bad floor
@@ -498,11 +500,6 @@ def parse_args():
         description="Find APs assigned to a floor with no map placement."
     )
     parser.add_argument("--dnac", default=DNAC, help="Catalyst Center hostname or IP")
-    parser.add_argument(
-        "--version",
-        default=DNAC_VERSION,
-        help="Catalyst Center API version to target (default: %(default)s)",
-    )
     parser.add_argument(
         "--site",
         default=None,
@@ -577,13 +574,7 @@ def main():
         os.remove(cache_path)
     cached_results = {} if args.fresh else load_cache(cache_path)
 
-    dnac_api = api.DNACenterAPI(
-        base_url="https://{}:443".format(args.dnac),
-        username=DNAC_USER,
-        password=DNAC_PASSWORD,
-        verify=args.verify_ssl,
-        version=args.version,
-    )
+    dnac_api = DnacClient(args.dnac, DNAC_USER, DNAC_PASSWORD, verify=args.verify_ssl)
     rate_limiter = RateLimiter(args.rate_limit) if args.rate_limit > 0 else None
     if rate_limiter:
         logger.info("Pacing API calls to %d/min", args.rate_limit)

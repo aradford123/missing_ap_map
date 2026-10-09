@@ -12,6 +12,13 @@ For every floor it compares:
 APs assigned to the floor but not present (by MAC address) in the positions
 list are reported as missing placement.
 
+## Python 3.8 / requests version (legacy branch)
+
+This branch talks to Catalyst Center with plain `requests` and runs on
+Python 3.8+. It has no Catalyst Center SDK dependency and no `--version`
+flag. It is frozen: the current version, built on `dnacentersdk` (Python
+3.12+), is on `main`.
+
 ## Setup
 
 ```bash
@@ -29,9 +36,10 @@ export DNAC_PASSWORD='mypassword'
 If unset, they default to the Cisco DevNet Always-On sandbox credentials
 (`devnetuser` / `Cisco123!`), which is only useful for smoke-testing the tool.
 
-`$DNAC` and `$DNAC_VERSION` set the defaults for `--dnac` and `--version`
-below (falling back to the DevNet sandbox host and API version `2.3.7.9` if
-unset).
+`$DNAC` sets the default for `--dnac` below (falling back to the DevNet
+sandbox host if unset).
+
+Requires Python 3.8+ and `requests` only (no Catalyst Center SDK).
 
 ## Usage
 
@@ -57,7 +65,6 @@ several controllers, pass a different `--dnac` each time.
 | Flag | Description |
 |---|---|
 | `--dnac` | Catalyst Center hostname/IP (defaults to `$DNAC`, then the DevNet sandbox) |
-| `--version` | Catalyst Center API version to target (defaults to `$DNAC_VERSION`, then `2.3.7.9`) |
 | `--site` | Only scan floors whose site hierarchy contains this substring. Omit to scan **every** floor. |
 | `--workers` | Number of floors processed concurrently (default 10) |
 | `--rate-limit` | Max API calls/minute, paced across all workers (default 100). `0` disables pacing - don't do that against a controller you don't control. |
