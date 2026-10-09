@@ -107,6 +107,18 @@ def _call_with_retry(fn, attempts=3, base_delay=1.0):
             time.sleep(delay)
 
 
+def _fmt_duration(seconds):
+    """Format seconds as e.g. '45s', '1m25s' or '1h02m03s'."""
+    seconds = int(round(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
 class ProgressReporter:
     """Live single-line progress indicator for a long-running floor scan."""
 
@@ -128,7 +140,8 @@ class ProgressReporter:
         pct = 100.0 * done / total if total else 100.0
         line = (
             f"\r  {done}/{total} floors ({pct:5.1f}%) "
-            f"| {rate_per_min:5.1f} floors/min | ETA {eta_min:5.1f} min   "
+            f"| {rate_per_min:5.1f} floors/min | elapsed {_fmt_duration(elapsed)} "
+            f"| ETA {eta_min:5.1f} min   "
         )
         if self._enabled:
             sys.stderr.write(line)
@@ -467,7 +480,7 @@ def write_report(results, output_path):
             )
 
 
-def print_summary(results):
+def print_summary(results, elapsed=None):
     scanned = [r for r in results if r.status == "scanned"]
     empty = [r for r in results if r.status == "empty"]
     errored = [r for r in results if r.status == "error"]
@@ -486,6 +499,8 @@ def print_summary(results):
     print(f"    Missing >=1 AP position:    {len(with_missing)}")
     print(f"Total APs correctly positioned:  {total_positioned}")
     print(f"Total APs missing placement:     {total_missing}")
+    if elapsed is not None:
+        print(f"Total time taken:                {_fmt_duration(elapsed)}")
     if errored:
         print()
         print("Floors that could not be scanned (see CSV/log for details):")
@@ -561,6 +576,7 @@ def parse_args():
 
 
 def main():
+    run_start = time.monotonic()
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -686,7 +702,7 @@ def main():
     write_report(results, output_path)
     print(f"\nDetailed report written to: {output_path}")
     print(f"Scan cache written to: {cache_path}")
-    print_summary(results)
+    print_summary(results, elapsed=time.monotonic() - run_start)
 
 
 if __name__ == "__main__":
